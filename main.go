@@ -31,7 +31,7 @@ import (
 
 // 这是一个固定的密钥，用于加密配置文件。
 // 警告：如果此密钥丢失或更改，旧的配置文件将无法解密！
-var encryptionKey = []byte("a-32-byte-long-secret-key-12345")
+var encryptionKey = []byte("ThirtyTwoByteLongCryptoSecretKey")
 
 // encrypt 使用 AES-GCM 加密数据
 func encrypt(data []byte, key []byte) (string, error) {
@@ -262,7 +262,7 @@ func main() {
 		} else {
 			dialog.ShowInformation("成功", "加密配置已保存！", appState.win)
 			appState.log("配置已成功加密并保存到 config.json")
-			appState.restartScheduler() // 重启调度器以应用新配置
+			appState.restartScheduler_unsafe() // 重启调度器以应用新配置
 		}
 	})
 
@@ -285,7 +285,7 @@ func main() {
 			appState.config = Config{} // 清空内存中的配置
 			os.Remove(configFile)      // 删除配置文件
 			appState.log("配置已清空。")
-			appState.stopScheduler()
+			appState.stopScheduler_unsafe()
 		}, appState.win)
 	})
 
@@ -529,7 +529,11 @@ func (app *AppState) downloadFile(client *sftp.Client, remoteFile, localFile str
 func (app *AppState) startScheduler() {
 	app.mu.Lock()
 	defer app.mu.Unlock()
+	app.startScheduler_unsafe()
+}
 
+// startScheduler_unsafe 启动调度器，假定调用方已持有锁
+func (app *AppState) startScheduler_unsafe() {
 	if app.schedulerTicker != nil {
 		app.schedulerTicker.Stop()
 	}
@@ -560,9 +564,10 @@ func (app *AppState) startScheduler() {
 		for range app.schedulerTicker.C {
 			app.mu.Lock()
 			lastBackup := app.config.LastBackupTime
+			needsBackup := time.Since(lastBackup) > duration
 			app.mu.Unlock()
 
-			if time.Since(lastBackup) > duration {
+			if needsBackup {
 				app.log("定时任务触发，开始自动备份...")
 				app.runBackup()
 			}
@@ -573,14 +578,26 @@ func (app *AppState) startScheduler() {
 func (app *AppState) stopScheduler() {
 	app.mu.Lock()
 	defer app.mu.Unlock()
+	app.stopScheduler_unsafe()
+}
+
+// stopScheduler_unsafe 停止调度器，假定调用方已持有锁
+func (app *AppState) stopScheduler_unsafe() {
 	if app.schedulerTicker != nil {
 		app.schedulerTicker.Stop()
+		app.schedulerTicker = nil
 		app.log("调度器已停止。")
 	}
 }
 
 func (app *AppState) restartScheduler() {
-	// 调用此函数前必须获取锁
-	app.stopScheduler()
-	app.startScheduler()
+	app.mu.Lock()
+	defer app.mu.Unlock()
+	app.restartScheduler_unsafe()
+}
+
+// restartScheduler_unsafe 重启调度器，假定调用方已持有锁
+func (app *AppState) restartScheduler_unsafe() {
+	app.stopScheduler_unsafe()
+	app.startScheduler_unsafe()
 }
